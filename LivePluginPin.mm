@@ -45,7 +45,6 @@ static BOOL hasPluginWindowClass(id object) {
     NSTimeInterval _trackingResumesAt;
     BOOL _tracking;
     BOOL _foreground;
-    BOOL _scanQueued;
 }
 
 - (instancetype)init {
@@ -106,10 +105,6 @@ static BOOL hasPluginWindowClass(id object) {
                    name:NSApplicationDidBecomeActiveNotification object:NSApp];
     [center addObserver:self selector:@selector(windowWillClose:)
                    name:NSWindowWillCloseNotification object:nil];
-    [center addObserver:self selector:@selector(windowChanged:)
-                   name:NSWindowDidChangeOcclusionStateNotification object:nil];
-    [center addObserver:self selector:@selector(windowChanged:)
-                   name:NSWindowDidBecomeKeyNotification object:nil];
 }
 
 - (void)startTimer {
@@ -186,18 +181,6 @@ static BOOL hasPluginWindowClass(id object) {
             [self pinWindow:window];
         }
     }
-}
-
-- (void)windowChanged:(NSNotification *)note {
-    if (!_tracking || !_foreground || _scanQueued) { return; }
-    _scanQueued = YES;
-    __weak LivePinWindows *weakSelf = self;
-    dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf runQueuedScan]; });
-}
-
-- (void)runQueuedScan {
-    _scanQueued = NO;
-    [self tick];
 }
 
 - (void)windowWillClose:(NSNotification *)note {
@@ -305,15 +288,6 @@ public:
         return kResultOk;
     }
 
-    tresult PLUGIN_API setBusArrangements(SpeakerArrangement* inputs, int32 numIns,
-                                          SpeakerArrangement* outputs, int32 numOuts) override {
-        if (numIns != 1 || numOuts != 1 || inputs[0] != outputs[0] ||
-            (inputs[0] != SpeakerArr::kMono && inputs[0] != SpeakerArr::kStereo)) {
-            return kResultFalse;
-        }
-        return AudioEffect::setBusArrangements(inputs, numIns, outputs, numOuts);
-    }
-
     tresult PLUGIN_API setActive(TBool enabled) override {
         const auto result = AudioEffect::setActive(enabled);
         if (result == kResultOk) { [activation_ setComponentActive:enabled != 0]; }
@@ -330,21 +304,22 @@ public:
         return AudioEffect::terminate();
     }
 
-    tresult PLUGIN_API canProcessSampleSize(int32 size) override {
-        return (size == kSample32 || size == kSample64) ? kResultTrue : kResultFalse;
-    }
-
     tresult PLUGIN_API process(ProcessData& data) override {
         if (data.numSamples <= 0 || data.numInputs != 1 || data.numOutputs != 1) {
             return kResultOk;
         }
         const auto& input = data.inputs[0];
         auto& output = data.outputs[0];
-        if (data.symbolicSampleSize == kSample64) {
-            copyAudio(input.channelBuffers64, output.channelBuffers64, input, output, data.numSamples);
-        } else {
-            copyAudio(input.channelBuffers32, output.channelBuffers32, input, output, data.numSamples);
+        const auto bytes = static_cast<size_t>(data.numSamples) * sizeof(Sample32);
+        for (int32 channel = 0; channel < output.numChannels; ++channel) {
+            auto* destination = output.channelBuffers32[channel];
+            if (channel >= input.numChannels) {
+                std::memset(destination, 0, bytes);
+            } else if (input.channelBuffers32[channel] != destination) {
+                std::memcpy(destination, input.channelBuffers32[channel], bytes);
+            }
         }
+        output.silenceFlags = input.silenceFlags;
         return kResultOk;
     }
 
@@ -353,24 +328,6 @@ public:
 
 private:
     LivePinActivation* __strong activation_ = [[LivePinActivation alloc] init];
-
-    template <class Sample>
-    static void copyAudio(Sample** inputs, Sample** outputs, const AudioBusBuffers& input,
-                          AudioBusBuffers& output, int32 samples) {
-        const auto bytes = static_cast<size_t>(samples) * sizeof(Sample);
-        output.silenceFlags = 0;
-        for (int32 channel = 0; channel < output.numChannels; ++channel) {
-            const uint64 bit = uint64{1} << channel;
-            const auto* source = inputs && channel < input.numChannels ? inputs[channel] : nullptr;
-            auto* destination = outputs ? outputs[channel] : nullptr;
-            if (!source || (input.silenceFlags & bit)) {
-                output.silenceFlags |= bit;
-                if (destination) { std::memset(destination, 0, bytes); }
-            } else if (destination && source != destination) {
-                std::memcpy(destination, source, bytes);
-            }
-        }
-    }
 };
 
 class PinController final : public EditController {
@@ -391,8 +348,8 @@ using namespace Steinberg::Vst;
 BEGIN_FACTORY_DEF("Local Tools", "", "")
     DEF_CLASS2(INLINE_UID_FROM_FUID(processorUID), PClassInfo::kManyInstances,
                kVstAudioEffectClass, "Live Plugin Pin", 0, "Fx|Tools",
-               "0.4.0", kVstVersionString, PassThrough::create)
+               PLUGIN_VERSION, kVstVersionString, PassThrough::create)
     DEF_CLASS2(INLINE_UID_FROM_FUID(controllerUID), PClassInfo::kManyInstances,
                kVstComponentControllerClass, "Live Plugin Pin Controller", 0, "",
-               "0.4.0", kVstVersionString, PinController::create)
+               PLUGIN_VERSION, kVstVersionString, PinController::create)
 END_FACTORY
