@@ -1,0 +1,45 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editors and local settings
+.idea/
+.vscode/
+*.swp
+*~
+xcuserdata/
+*.xcuserstate
+.env
+.env.*
+!.env.example
+
+# CMake and Ninja
+/build/
+/build-*/
+/cmake-build-*/
+/CMakeCache.txt
+/CMakeFiles/
+/CMakeUserPresets.json
+/CTestTestfile.cmake
+/Testing/
+/Makefile
+/cmake_install.cmake
+/install_manifest.txt
+/compile_commands.json
+/build.ninja
+/.ninja_deps
+/.ninja_log
+/*.xcodeproj/
+
+# Compiled files, bundles, and local archives
+*.o
+*.a
+*.dylib
+*.so
+*.dSYM/
+*.vst3/
+*.component/
+*.app/
+*.zip
+*.log
