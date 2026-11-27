@@ -1,8 +1,9 @@
 # Live Plugin Pin
 
 Ableton Live hides its plug-in windows when you switch to another app.
-Live Plugin Pin keeps them visible. You can keep plug-in windows open on one
-monitor and work in a browser or another app on the other monitor.
+Live Plugin Pin keeps them visible on top while another app has the focus.
+For example, you can use a browser and keep a plug-in window in view, on the
+same monitor or on a second monitor.
 
 It is a VST3 audio effect. Audio passes through unchanged.
 
@@ -67,6 +68,14 @@ in the environment and in CMake, for example
 To make a release, change the version in `CMakeLists.txt`, then push a tag
 with the same version, for example `v0.1.0`. GitHub Actions builds the
 plug-in and makes a draft release. Test the draft, then publish it.
+
+## Support
+
+Thank you for using this project! If you find it helpful and want to support my work, kindly consider buying me a coffee. Your support is greatly appreciated!
+
+<a href="https://www.buymeacoffee.com/ivnvxd" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="60" width="217"></a>
+
+If you like the project, do not forget to give it a star! :star:
 
 ## License
 
