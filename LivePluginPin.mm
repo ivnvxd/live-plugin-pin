@@ -1,5 +1,7 @@
 #import <AppKit/AppKit.h>
 
+#include "base/source/fstreamer.h"
+#include "pluginterfaces/vst/ivstparameterchanges.h"
 #include "public.sdk/source/main/pluginfactory.h"
 #include "public.sdk/source/vst/vstaudioeffect.h"
 #include "public.sdk/source/vst/vsteditcontroller.h"
@@ -30,6 +32,8 @@ static BOOL hasPluginWindowClass(id object) {
 - (void)setComponentActive:(BOOL)active;
 - (void)setProcessing:(BOOL)processing;
 - (BOOL)isProcessing;
+- (void)setAboveLiveOnly:(BOOL)aboveLiveOnly;
+- (BOOL)isAboveLiveOnly;
 @end
 
 @interface LivePinWindows : NSObject
@@ -45,6 +49,7 @@ static BOOL hasPluginWindowClass(id object) {
     NSTimeInterval _trackingResumesAt;
     BOOL _tracking;
     BOOL _foreground;
+    BOOL _aboveLiveOnly;
 }
 
 - (instancetype)init {
@@ -73,11 +78,16 @@ static BOOL hasPluginWindowClass(id object) {
 
 - (void)updateTracking {
     BOOL shouldTrack = NO;
+    BOOL aboveLiveOnly = YES;
     for (LivePinActivation *instance in _activeInstances) {
         if (instance.isProcessing) {
             shouldTrack = YES;
-            break;
+            aboveLiveOnly = aboveLiveOnly && instance.isAboveLiveOnly;
         }
+    }
+    if (shouldTrack && aboveLiveOnly != _aboveLiveOnly) {
+        _aboveLiveOnly = aboveLiveOnly;
+        if (_tracking && !NSApp.isActive) { [self restoreAfterDeactivation:_deactivation]; }
     }
     if (shouldTrack == _tracking) { return; }
     _tracking = shouldTrack;
@@ -217,12 +227,29 @@ static BOOL hasPluginWindowClass(id object) {
                    dispatch_get_main_queue(), ^{ [weakSelf restoreAfterDeactivation:change]; });
 }
 
+- (NSWindow *)liveWindowBelowEditors {
+    for (NSWindow *window in NSApp.orderedWindows) {
+        if (window.isVisible && window.level == NSNormalWindowLevel && ![self pinForWindow:window]) {
+            return window;
+        }
+    }
+    return nil;
+}
+
 - (void)restoreAfterDeactivation:(NSUInteger)change {
     if (change != _deactivation || NSApp.isActive || NSApp.isHidden) { return; }
+    NSWindow *anchor = _aboveLiveOnly ? [self liveWindowBelowEditors] : nil;
     for (NSWindow *window in _windowsAtDeactivation.allObjects) {
-        if (!window.isVisible && !window.isMiniaturized && window.contentView) {
+        LivePinRecord *pin = [self pinForWindow:window];
+        if (!pin || window.isMiniaturized || !window.contentView) { continue; }
+        if (!window.isVisible) { pin.reorderedInBackground = YES; }
+        if (anchor) {
+            // Other apps stay above the editor. Only Live's own window stays below it.
+            window.level = NSNormalWindowLevel;
+            [window orderWindow:NSWindowAbove relativeTo:anchor.windowNumber];
+        } else {
+            window.level = MAX(pin.level, NSFloatingWindowLevel);
             [window orderFrontRegardless];
-            [self pinForWindow:window].reorderedInBackground = YES;
         }
     }
 }
@@ -232,19 +259,35 @@ static BOOL hasPluginWindowClass(id object) {
     _foreground = YES;
     // Let Live settle its own window visibility before treating a hidden editor as dismissed.
     _trackingResumesAt = NSProcessInfo.processInfo.systemUptime + 0.17;
-    for (LivePinRecord *pin in _pins) { pin.reorderedInBackground = NO; }
+    for (LivePinRecord *pin in _pins) {
+        pin.reorderedInBackground = NO;
+        pin.window.level = MAX(pin.level, NSFloatingWindowLevel);
+    }
 }
 @end
 
 @implementation LivePinActivation {
     std::atomic_bool _processing;
+    std::atomic_bool _aboveLiveOnly;
     BOOL _componentActive;
 }
 
 - (instancetype)init {
     self = [super init];
-    if (self) { _processing.store(false, std::memory_order_relaxed); }
+    if (self) {
+        _processing.store(false, std::memory_order_relaxed);
+        _aboveLiveOnly.store(true, std::memory_order_relaxed);
+    }
     return self;
+}
+
+- (void)setAboveLiveOnly:(BOOL)aboveLiveOnly {
+    // Set from the audio thread or from state. Poll it on the main thread.
+    _aboveLiveOnly.store(aboveLiveOnly, std::memory_order_relaxed);
+}
+
+- (BOOL)isAboveLiveOnly {
+    return _aboveLiveOnly.load(std::memory_order_relaxed);
 }
 
 - (void)setProcessing:(BOOL)processing {
@@ -271,6 +314,15 @@ using namespace Steinberg;
 using namespace Steinberg::Vst;
 const FUID processorUID(0x185DC881, 0x3A5F4533, 0xB8DE35B9, 0x57885A1F);
 const FUID controllerUID(0x2670B9AA, 0x959E4185, 0xA577F86E, 0x30805667);
+constexpr ParamID kStayAboveId = 0;
+
+// Sets saved before this parameter existed have no state. They keep the default, Live.
+bool readStayAbove(IBStream* state, bool& aboveLiveOnly) {
+    int32 value = 0;
+    if (!state || !IBStreamer(state, kLittleEndian).readInt32(value)) { return false; }
+    aboveLiveOnly = value != 0;
+    return true;
+}
 
 class PassThrough final : public AudioEffect {
 public:
@@ -305,6 +357,17 @@ public:
     }
 
     tresult PLUGIN_API process(ProcessData& data) override {
+        if (auto* changes = data.inputParameterChanges) {
+            for (int32 index = 0; index < changes->getParameterCount(); ++index) {
+                auto* queue = changes->getParameterData(index);
+                int32 offset = 0;
+                ParamValue value = 0;
+                if (queue && queue->getParameterId() == kStayAboveId && queue->getPointCount() > 0 &&
+                    queue->getPoint(queue->getPointCount() - 1, offset, value) == kResultOk) {
+                    [activation_ setAboveLiveOnly:value >= 0.5];
+                }
+            }
+        }
         if (data.numSamples <= 0 || data.numInputs != 1 || data.numOutputs != 1) {
             return kResultOk;
         }
@@ -323,8 +386,17 @@ public:
         return kResultOk;
     }
 
-    tresult PLUGIN_API getState(IBStream*) override { return kResultOk; }
-    tresult PLUGIN_API setState(IBStream*) override { return kResultOk; }
+    tresult PLUGIN_API getState(IBStream* state) override {
+        const int32 value = activation_.isAboveLiveOnly ? 1 : 0;
+        return IBStreamer(state, kLittleEndian).writeInt32(value) ? kResultOk : kResultFalse;
+    }
+
+    tresult PLUGIN_API setState(IBStream* state) override {
+        bool aboveLiveOnly = true;
+        readStayAbove(state, aboveLiveOnly);
+        [activation_ setAboveLiveOnly:aboveLiveOnly];
+        return kResultOk;
+    }
 
 private:
     LivePinActivation* __strong activation_ = [[LivePinActivation alloc] init];
@@ -334,9 +406,28 @@ class PinController final : public EditController {
 public:
     static FUnknown* create(void*) { return static_cast<IEditController*>(new PinController()); }
 
+    tresult PLUGIN_API initialize(FUnknown* context) override {
+        const auto result = EditController::initialize(context);
+        if (result != kResultOk) { return result; }
+
+        auto* stayAbove = new StringListParameter(STR16("Stay Above"), kStayAboveId);
+        stayAbove->appendString(STR16("All Apps"));
+        stayAbove->appendString(STR16("Live"));
+        stayAbove->getInfo().defaultNormalizedValue = 1.0;
+        stayAbove->setNormalized(1.0);
+        parameters.addParameter(stayAbove);
+        return kResultOk;
+    }
+
+    tresult PLUGIN_API setComponentState(IBStream* state) override {
+        bool aboveLiveOnly = true;
+        readStayAbove(state, aboveLiveOnly);
+        setParamNormalized(kStayAboveId, aboveLiveOnly ? 1.0 : 0.0);
+        return kResultOk;
+    }
+
     // Earlier versions saved a separate setting in the controller. Live now saves
     // the Device Activator itself. Accept either format when opening old sets.
-    tresult PLUGIN_API setComponentState(IBStream*) override { return kResultOk; }
     tresult PLUGIN_API setState(IBStream*) override { return kResultOk; }
     tresult PLUGIN_API getState(IBStream*) override { return kResultOk; }
 };

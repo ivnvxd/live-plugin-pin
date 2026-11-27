@@ -39,11 +39,16 @@ Use one instance for each Live Set.
 - Device off: Live hides plug-in windows again when you switch apps.
 - If you close or hide a plug-in window, it closes as usual.
 
+The device has one setting, **Stay Above**:
+
+- **Live** (default): plug-in windows stay above Live, but the app that you
+  use comes in front of them.
+- **All Apps**: plug-in windows stay above the windows of all apps.
+
 ## Limits
 
 - The plug-in uses internal behavior of Live. A Live update can stop it
   from working. If this happens, open an issue.
-- Pinned windows stay above the windows of other apps.
 - In hosts other than Live, it does nothing.
 
 ## Build from source
