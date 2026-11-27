@@ -345,7 +345,7 @@ public:
 using namespace Steinberg;
 using namespace Steinberg::Vst;
 
-BEGIN_FACTORY_DEF("Local Tools", "", "")
+BEGIN_FACTORY_DEF("ivnvxd", "https://github.com/ivnvxd/live-plugin-pin", "")
     DEF_CLASS2(INLINE_UID_FROM_FUID(processorUID), PClassInfo::kManyInstances,
                kVstAudioEffectClass, "Live Plugin Pin", 0, "Fx|Tools",
                PLUGIN_VERSION, kVstVersionString, PassThrough::create)

@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check that the tag matches the version
+        run: |
+          version=$(sed -n 's/^project(LivePluginPin VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match version $version in CMakeLists.txt"
+            exit 1
+          fi
+
+      - name: Get the VST3 SDK
+        run: |
+          git init -q ../vst3sdk
+          git -C ../vst3sdk remote add origin https://github.com/steinbergmedia/vst3sdk.git
+          git -C ../vst3sdk fetch -q --depth 1 origin 3cdf9ca5d1f5b1b21e0a86832aa4abe55607bd96
+          git -C ../vst3sdk checkout -q FETCH_HEAD
+          git -C ../vst3sdk submodule update -q --init --depth 1 base cmake pluginterfaces public.sdk
+
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0
+          cmake --build build --target LivePluginPin --parallel
+          codesign --force --sign - "build/Live Plugin Pin.vst3"
+
+      - name: Package
+        run: |
+          mkdir -p "dist/Live Plugin Pin"
+          cp -R "build/Live Plugin Pin.vst3" LICENSE STEINBERG-SDK-LICENSE.txt "dist/Live Plugin Pin/"
+          ditto -c -k --norsrc --noextattr --keepParent "dist/Live Plugin Pin" "dist/Live-Plugin-Pin-$GITHUB_REF_NAME-macOS-arm64.zip"
+
+      - name: Create a draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.zip --draft --generate-notes \
+            --title "Live Plugin Pin $GITHUB_REF_NAME"

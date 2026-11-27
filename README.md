@@ -1,25 +1,58 @@
 # Live Plugin Pin
 
-An Apple Silicon VST3 audio effect for Ableton Live on macOS 14 or later.
-It keeps Live's floating plug-in editors visible when another application
-has focus. Audio passes through unchanged.
+Ableton Live hides its plug-in windows when you switch to another app.
+Live Plugin Pin keeps them visible. You can keep plug-in windows open on one
+monitor and work in a browser or another app on the other monitor.
+
+It is a VST3 audio effect. Audio passes through unchanged.
+
+Requirements: a Mac with Apple Silicon, macOS 14 or later, and Ableton Live
+with VST3 plug-ins enabled.
+
+## Install
+
+1. Download the zip from the latest
+   [release](https://github.com/ivnvxd/live-plugin-pin/releases/latest) and open it.
+2. Quit Live.
+3. Move `Live Plugin Pin.vst3` to `~/Library/Audio/Plug-Ins/VST3`.
+   If an older version is there, replace it.
+4. The plug-in is not signed by Apple, so macOS blocks it. To allow it,
+   run this command once in Terminal:
+
+   ```sh
+   xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"Live Plugin Pin.vst3"
+   ```
+
+5. Start Live. The plug-in is in the browser at
+   **Plug-Ins > VST3 > ivnvxd**. If it is not there, open
+   **Settings > Plug-Ins**. Make sure that **Use VST3 Plug-in System Folders**
+   is on, then click **Rescan**.
 
 ## Use
 
-Add one instance to an audio track, Return, Main, or after the instrument on
-a MIDI track. Live's Device Activator controls pinning for the entire set.
-Turning it on pins open editors and any editors opened later. Turning it off
-releases the pins. Hiding or closing an editor releases its pin.
+Add one instance to any audio track, Return track or the Main track.
+Use one instance for each Live Set.
 
-## Build
+- Device on: all open plug-in windows stay visible, and plug-in windows
+  that you open later also stay visible.
+- Device off: Live hides plug-in windows again when you switch apps.
+- If you close or hide a plug-in window, it closes as usual.
 
-Use CMake 3.25 or later and Xcode. Check out the Steinberg VST3 SDK next to
-this repository, or pass its path to CMake with `-DVST3_SDK_DIR=/path/to/vst3sdk`.
+## Limits
+
+- The plug-in uses internal behavior of Live. A Live update can stop it
+  from working. If this happens, open an issue.
+- Pinned windows stay above the windows of other apps.
+- In hosts other than Live, it does nothing.
+
+## Build from source
+
+You need Xcode and CMake 3.25 or later.
 
 ```sh
 git clone https://github.com/steinbergmedia/vst3sdk.git ../vst3sdk
 git -C ../vst3sdk checkout 3cdf9ca5d1f5b1b21e0a86832aa4abe55607bd96
-git -C ../vst3sdk submodule update --init --recursive
+git -C ../vst3sdk submodule update --init base cmake pluginterfaces public.sdk
 
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0
@@ -27,13 +60,15 @@ cmake --build build --target LivePluginPin --parallel
 codesign --force --sign - "build/Live Plugin Pin.vst3"
 ```
 
-With Command Line Tools alone, the SDK can't detect an Xcode version.
-Set `XCODE_VERSION` in the environment and pass the same version to CMake
-with `-DXCODE_VERSION=...`. The local release build used `27.2`.
+If you have only the Command Line Tools and not Xcode, set the same Xcode version
+in the environment and in CMake, for example
+`XCODE_VERSION=16.0 cmake ... -DXCODE_VERSION=16.0`.
 
-## Install
+To make a release, change the version in `CMakeLists.txt`, then push a tag
+with the same version, for example `v0.1.0`. GitHub Actions builds the
+plug-in and makes a draft release. Test the draft, then publish it.
 
-Quit Live and copy `build/Live Plugin Pin.vst3` to
-`~/Library/Audio/Plug-Ins/VST3` or `/Library/Audio/Plug-Ins/VST3`.
-Replace the existing bundle if updating. Restart Live and rescan plug-ins
-in **Settings > Plug-Ins** if needed.
+## License
+
+MIT, see [LICENSE](LICENSE). The VST3 SDK is MIT-licensed by Steinberg, see
+[STEINBERG-SDK-LICENSE.txt](STEINBERG-SDK-LICENSE.txt).
